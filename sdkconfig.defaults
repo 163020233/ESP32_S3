@@ -1,0 +1,31 @@
+# ============================================================
+# ESP32-S3 + W5500 Ethernet Test - build defaults
+# ============================================================
+
+# Target MCU: ESP32-S3
+CONFIG_IDF_TARGET="esp32s3"
+
+# ---- Ethernet (SPI attached W5500) ----
+CONFIG_ETH_ENABLED=y
+CONFIG_ETH_USE_SPI_ETHERNET=y
+# Serialize Ethernet TX when multiple tasks may transmit
+CONFIG_ETH_TRANSMIT_MUTEX=y
+
+# ---- Main task ----
+# Larger stack for init + console menu
+CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+
+# ---- Console: USB-Serial/JTAG as PRIMARY (input+output over native USB)
+# The board is monitored via the native USB port; the UART0 secondary
+# console would float stdin (RX noise -> menu spam).
+CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
+CONFIG_ESP_CONSOLE_UART_DEFAULT=n
+CONFIG_ESP_CONSOLE_SECONDARY_NONE=y
+
+# ---- Flash size (board detected as 16MB "boya") ----
+CONFIG_ESPTOOLPY_FLASHSIZE_16MB=y
+
+# ---- lwIP tuning ----
+CONFIG_LWIP_MAX_SOCKETS=12
+CONFIG_LWIP_UDP_RECVMBOX_SIZE=64
+CONFIG_LWIP_TCP_RECVMBOX_SIZE=64

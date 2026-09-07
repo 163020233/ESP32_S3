@@ -1,0 +1,9 @@
+## IDF Component Manager Manifest File
+##
+## W5500 芯片驱动已通过手动方式放入项目 components/ 目录：
+##   components/esp_eth_driver_w5500/  (espressif/esp_eth_driver_w5500)
+##   components/wiznet_common/          (espressif/wiznet_common, 驱动依赖)
+##
+## 因此这里不再声明注册表依赖，构建无需联网。
+dependencies:
+  idf: ">=6.0"

@@ -1,0 +1,22 @@
+idf_component_register(
+    SRCS
+        "main.c"
+        "w5500_port.c"
+        "ethernet_manager.c"
+        "network_monitor.c"
+        "tcp_test.c"
+        "udp_test.c"
+        "stress_test.c"
+    INCLUDE_DIRS "."
+    REQUIRES
+        esp_eth
+        esp_eth_driver_w5500
+        esp_driver_spi
+        esp_driver_gpio
+        esp_driver_uart
+        esp_driver_usb_serial_jtag
+        esp_netif
+        esp_event
+        esp_timer
+        lwip
+)
