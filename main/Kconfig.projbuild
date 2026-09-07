@@ -1,0 +1,23 @@
+menu "AirNode 应用配置"
+
+config AIRNODE_APP_ENABLE
+    bool "使能 AirNode 业务应用（TCP:13550 JSON + UART 配置 + 舵机）"
+    default y
+    help
+        从 STM32F407 AirNode 移植的抛投器业务功能：
+          - TCP Server :13550（\r\n\r\n 分帧 JSON 指令路由，兼容 Android App）
+          - UART1(17/18) 115200 配置口（兼容 PC 配置工具 thrower_config.py）
+          - LEDC 双路舵机 PWM（500~2500us）
+          - NVS 保存通道闭合/投掷 PWM 参数
+        关闭后仅保留以太网底座 + 验证工具。
+
+config AIRNODE_TEST_TOOLS_ENABLE
+    bool "使能以太网验证工具（串口菜单 / TCP 回显 / UDP / 压力 / 长稳）"
+    default y
+    help
+        原 ESP32-S3 + W5500 以太网通信验证程序的测试功能。
+        生产版裁剪：置 n 后不编译串口测试菜单、TCP(5000) 回显、
+        UDP(5001)、压力测试、长稳测试等模块，固件只保留
+        以太网底座 + AirNode 业务，减小体积并杜绝测试端口暴露。
+
+endmenu

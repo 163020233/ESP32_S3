@@ -1,0 +1,4 @@
+# 生产版构建默认值（仅用于验证 AIRNODE_TEST_TOOLS_ENABLE 裁剪路径）
+# 用法示例: idf.py -DSDKCONFIG=build_prod/sdkconfig -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.prod" -B build_prod build
+# 裁剪以太网验证工具（菜单/5000回显/5001UDP/压力/长稳），只保留 AirNode 业务
+CONFIG_AIRNODE_TEST_TOOLS_ENABLE=n

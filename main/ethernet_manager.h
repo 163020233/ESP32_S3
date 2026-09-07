@@ -46,6 +46,16 @@ esp_err_t ethernet_manager_start(void);
 esp_err_t ethernet_manager_restart(void);
 
 /**
+ * @brief 应用 NVS 中的网络参数到当前 netif（无需重启/重烧）
+ *
+ * 配合 net_set 指令：改 IP/掩码/网关后即时生效。
+ * 已建立的 TCP 连接会因地址变更断开，客户端需重连。
+ *
+ * @return esp_err_t
+ */
+esp_err_t ethernet_manager_reapply_config(void);
+
+/**
  * @brief 获取链路状态事件组句柄
  */
 EventGroupHandle_t ethernet_manager_get_event_group(void);

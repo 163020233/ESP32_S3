@@ -16,6 +16,7 @@
 #include "test_config.h"
 #include "w5500_port.h"
 #include "ethernet_manager.h"
+#include "net_config.h"
 
 static const char *TAG = "ETH";
 
@@ -62,7 +63,10 @@ static void eth_event_handler(void *arg, esp_event_base_t event_base,
             xEventGroupSetBits(s_evt_group, ETH_EV_LINK_UP_BIT | ETH_EV_NET_READY_BIT);
         }
         s_net_ready = true;
-        ESP_LOGI(TAG, "IP: %s", ETH_STATIC_IP_ADDR);
+        esp_netif_ip_info_t ip_info = { 0 };
+        if (esp_netif_get_ip_info(s_eth_netif, &ip_info) == ESP_OK) {
+            ESP_LOGI(TAG, "IP: " IPSTR, IP2STR(&ip_info.ip));
+        }
         ESP_LOGI(TAG, "NETWORK READY");
         break;
     }
@@ -139,12 +143,18 @@ esp_err_t ethernet_manager_start(void)
         return ESP_FAIL;
     }
 
-    /* 3. 静态 IP（第一阶段使用静态 IP 方便测试） */
+    /* 3. 静态 IP：
+     *    NVS 网络参数优先（首次上电自动落盘默认 192.168.144.20/24，
+     *    之后 net_set 修改即时生效且无需重新烧录），
+     *    无 NVS 时退回 test_config.h 的 ETH_STATIC_* 默认值 */
     esp_netif_dhcpc_stop(s_eth_netif);
     esp_netif_ip_info_t ip_info = { 0 };
-    if (esp_netif_str_to_ip4(ETH_STATIC_IP_ADDR, &ip_info.ip) != ESP_OK ||
-        esp_netif_str_to_ip4(ETH_STATIC_NETMASK, &ip_info.netmask) != ESP_OK ||
-        esp_netif_str_to_ip4(ETH_STATIC_GATEWAY, &ip_info.gw) != ESP_OK) {
+    char ip_s[16], mask_s[16], gw_s[16];
+    net_config_load();
+    net_config_get(ip_s, mask_s, gw_s);
+    if (esp_netif_str_to_ip4(ip_s, &ip_info.ip) != ESP_OK ||
+        esp_netif_str_to_ip4(mask_s, &ip_info.netmask) != ESP_OK ||
+        esp_netif_str_to_ip4(gw_s, &ip_info.gw) != ESP_OK) {
         ESP_LOGE(TAG, "invalid static IP config");
         return ESP_ERR_INVALID_ARG;
     }
@@ -188,8 +198,39 @@ esp_err_t ethernet_manager_start(void)
 
     /* 7. 启动以太网 */
     ESP_RETURN_ON_ERROR(esp_eth_start(s_eth_handle), TAG, "eth start failed");
-    ESP_LOGI(TAG, "Ethernet started (static IP %s, waiting for link...)", ETH_STATIC_IP_ADDR);
+    ESP_LOGI(TAG, "Ethernet started (static IP %s/%s gw=%s, waiting for link...)",
+             ip_s, mask_s, gw_s);
     return ESP_OK;
+}
+
+esp_err_t ethernet_manager_reapply_config(void)
+{
+    if (s_eth_netif == NULL) {
+        ESP_LOGW(TAG, "Ethernet not initialized");
+        return ESP_ERR_INVALID_STATE;
+    }
+
+    char ip_s[16], mask_s[16], gw_s[16];
+    esp_err_t err = net_config_get(ip_s, mask_s, gw_s);
+    if (err != ESP_OK) {
+        return err;
+    }
+
+    esp_netif_ip_info_t ip_info = { 0 };
+    if (esp_netif_str_to_ip4(ip_s, &ip_info.ip) != ESP_OK ||
+        esp_netif_str_to_ip4(mask_s, &ip_info.netmask) != ESP_OK ||
+        esp_netif_str_to_ip4(gw_s, &ip_info.gw) != ESP_OK) {
+        return ESP_ERR_INVALID_ARG;
+    }
+
+    err = esp_netif_set_ip_info(s_eth_netif, &ip_info);
+    if (err == ESP_OK) {
+        ESP_LOGI(TAG, "IP updated: %s/%s gw=%s (existing TCP clients will reconnect)",
+                 ip_s, mask_s, gw_s);
+    } else {
+        ESP_LOGE(TAG, "set IP failed: %s", esp_err_to_name(err));
+    }
+    return err;
 }
 
 esp_err_t ethernet_manager_restart(void)
