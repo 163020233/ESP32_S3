@@ -75,6 +75,18 @@ idf.py build
 idf.py -p COMx flash monitor
 ```
 
+**一键出生产固件**：双击工程根目录的 `build_prod.bat`（或终端运行 `.\build_prod.bat`），
+自动激活 ESP-IDF 并用 `sdkconfig.prod`（关闭验证工具）编译到独立目录 `build_prod\`，
+不影响开发用的 `sdkconfig` 与 `build\`。产物为 `build_prod\hello_world.bin`，
+烧录：`idf.py -B build_prod -p COMx flash`。
+
+等效手动命令（不想要脚本时）：
+```bash
+idf.py -DSDKCONFIG="<工程绝对路径>\build_prod\sdkconfig" ^
+       -DSDKCONFIG_DEFAULTS="sdkconfig.defaults;sdkconfig.prod" ^
+       -B build_prod build
+```
+
 ## 网络配置
 
 默认静态 IP **192.168.144.20 / 255.255.255.0 / gw 192.168.144.1**
