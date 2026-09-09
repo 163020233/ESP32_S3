@@ -51,6 +51,8 @@ typedef struct {
 static QueueHandle_t s_router_q = NULL;   /* 入站帧：tcp/uart -> router */
 static QueueHandle_t s_send_q   = NULL;   /* 应答帧：router -> tcp       */
 static volatile bool s_running  = false;
+/* net_set 改 IP 后置位：tcp 任务需关闭当前会话，等客户端用新 IP 重连 */
+static volatile bool s_force_reconnect = false;
 
 static TaskHandle_t s_router_task = NULL;
 static TaskHandle_t s_tcp_task    = NULL;
@@ -126,6 +128,29 @@ static int angle_of_channel(uint8_t ch, int fallback)
     return angle;
 }
 
+/* 读取 cseq：优先字符串，兼容 {"cseq":74} 这类数字形式（应答仍回显为字符串） */
+static void read_cseq(const char *json, char *out, size_t size)
+{
+    if (size == 0) {
+        return;
+    }
+    if (airnode_json_get_string(json, "cseq", out, (int)size) == 0) {
+        return;
+    }
+    int v = -1;
+    if (airnode_json_get_int(json, "cseq", &v) == 0 && v >= 0) {
+        snprintf(out, size, "%d", v);
+    } else {
+        out[0] = '\0';
+    }
+}
+
+/* 通知 tcp 任务：网络参数已变更，请关闭当前客户端会话 */
+static void airnode_force_client_reconnect(void)
+{
+    s_force_reconnect = true;
+}
+
 /* ================================================================== */
 /* 指令路由（RouterTask 主体，逻辑与 STM32 freertos.c 一致）              */
 /* ================================================================== */
@@ -145,7 +170,7 @@ static void route_json(const char *json)
 
     cseq[0] = '\0';
     command[0] = '\0';
-    airnode_json_get_string(json, "cseq", cseq, sizeof(cseq));
+    read_cseq(json, cseq, sizeof(cseq));
 
     if (airnode_json_get_string(json, "command", command, sizeof(command)) != 0) {
         ESP_LOGD(TAG, "no command field, skip");
@@ -176,6 +201,19 @@ static void route_json(const char *json)
         airnode_json_get_int(json, "released", &released);
 
         if (channel >= 0 && channel < AIRNODE_CHANNEL_COUNT) {
+            /* PWM 范围校验：与输出端 clamp(500~2500) 保持一致，非法值不入库 */
+            if (closed < AIRNODE_SERVO_PWM_MIN_US ||
+                closed > AIRNODE_SERVO_PWM_MAX_US ||
+                released < AIRNODE_SERVO_PWM_MIN_US ||
+                released > AIRNODE_SERVO_PWM_MAX_US) {
+                snprintf(resp, sizeof(resp),
+                         "{\"command\":\"config_write\",\"code\":\"400\",\"ch\":%d,"
+                         "\"cseq\":\"%s\",\"msg\":\"pwm out of range (%d..%d)\"}"
+                         MSG_DELIMITER, channel, cseq,
+                         AIRNODE_SERVO_PWM_MIN_US, AIRNODE_SERVO_PWM_MAX_US);
+                send_response(resp);
+                return;
+            }
             err = config_store_set((uint8_t)channel, (uint16_t)closed, (uint16_t)released);
             if (err == ESP_OK) {
                 snprintf(resp, sizeof(resp),
@@ -198,7 +236,26 @@ static void route_json(const char *json)
     /* ================= 抛投触发 ================= */
     else if (strcmp(command, "servo_trigger") == 0) {
         airnode_json_get_int(json, "ch", &channel);
-        airnode_json_get_string(json, "action", action, sizeof(action));
+        int arc = airnode_json_get_string(json, "action", action, sizeof(action));
+        if (arc == 0) {
+            if (strcmp(action, "close") != 0 && strcmp(action, "release") != 0) {
+                snprintf(resp, sizeof(resp),
+                         "{\"command\":\"servo_trigger\",\"code\":\"400\",\"ch\":%d,"
+                         "\"action\":\"%s\",\"cseq\":\"%s\",\"msg\":\"bad action\"}"
+                         MSG_DELIMITER, channel, action, cseq);
+                send_response(resp);
+                return;
+            }
+        } else if (arc != -1) {
+            /* action 存在但非法（截断/未闭合）：明确拒绝，避免被误当成 close */
+            snprintf(resp, sizeof(resp),
+                     "{\"command\":\"servo_trigger\",\"code\":\"400\",\"ch\":%d,"
+                     "\"cseq\":\"%s\",\"msg\":\"bad action\"}" MSG_DELIMITER,
+                     channel, cseq);
+            send_response(resp);
+            return;
+        }
+        /* arc == -1：未提供 action，沿用默认 "close"（兼容旧行为） */
 
         cfg = config_store_get((uint8_t)channel);
         if (cfg != NULL) {
@@ -321,9 +378,11 @@ static void route_json(const char *json)
                      "\"mask\":\"%s\",\"gw\":\"%s\",\"cseq\":\"%s\",\"msg\":\"saved, applying\"}"
                      MSG_DELIMITER, ip_s, mask_s, gw_s, cseq);
             send_response(resp);
-            /* 先让应答发出去（TCP 队列 + UART），再切换 IP，客户端随后重连 */
+            /* 先让应答发出去（TCP 队列 + UART），再切换 IP；
+             * 最后通知 tcp 任务关闭旧会话，避免旧连接占住单会话名额 */
             vTaskDelay(pdMS_TO_TICKS(200));
             ethernet_manager_reapply_config();
+            airnode_force_client_reconnect();
             return;
         } else {
             snprintf(resp, sizeof(resp),
@@ -365,8 +424,9 @@ static void router_task(void *arg)
 /* TCP Server 任务（原 NetTask）：TCP:13550 单连接会话 + 应答下发        */
 /* ================================================================== */
 
-/* 把应答队列里的数据全部发给当前客户端（无客户端时丢弃，与 STM32 一致） */
-static void tcp_flush_responses(int client_fd)
+/* 把应答队列里的数据全部发给当前客户端（无客户端时丢弃，与 STM32 一致）。
+ * @return true 全部成功（或无客户端）；false 发送失败/超时，调用方应关闭会话 */
+static bool tcp_flush_responses(int client_fd)
 {
     airnode_frame_t f;
     while (xQueueReceive(s_send_q, &f, 0) == pdTRUE) {
@@ -380,10 +440,11 @@ static void tcp_flush_responses(int client_fd)
                 off += (size_t)s;
             } else {
                 ESP_LOGW(TAG, "send() failed: %d", errno);
-                break;
+                return false;   /* SO_SNDTIMEO 超时 / 对端关闭：交给上层断会话 */
             }
         }
     }
+    return true;
 }
 
 static void tcp_close_socket(int fd)
@@ -405,6 +466,17 @@ static void tcp_server_task(void *arg)
     size_t  pending = 0;
 
     while (s_running) {
+        /* net_set 改 IP 后：主动关闭当前会话，等待客户端用新 IP 重连 */
+        if (s_force_reconnect) {
+            s_force_reconnect = false;
+            if (client_fd >= 0) {
+                ESP_LOGW(TAG, "net config changed, closing current client session");
+                tcp_close_socket(client_fd);
+                client_fd = -1;
+                pending = 0;
+            }
+        }
+
         /* 等待网络就绪；断开时清理残留 socket */
         if (!ethernet_manager_is_net_ready()) {
             if (client_fd >= 0) {
@@ -477,6 +549,16 @@ static void tcp_server_task(void *arg)
             }
             ESP_LOGI(TAG, "client connected: %s:%d",
                      inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+            /* 会话加固：NODELAY + keepalive + 发送超时。
+             * 避免"对端保持连接但不读数据/半死连接"让阻塞 send()
+             * 把唯一的会话服务永久卡死（新客户端再也连不进来）。 */
+            {
+                int one = 1;
+                setsockopt(client_fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one));
+                setsockopt(client_fd, SOL_SOCKET, SO_KEEPALIVE, &one, sizeof(one));
+                struct timeval snd_tv = { .tv_sec = 2, .tv_usec = 0 };
+                setsockopt(client_fd, SOL_SOCKET, SO_SNDTIMEO, &snd_tv, sizeof(snd_tv));
+            }
             pending = 0;
             /* 丢弃监听期间积压的应答（无人接收） */
             tcp_flush_responses(-1);
@@ -540,7 +622,12 @@ static void tcp_server_task(void *arg)
                 }
             }
         }
-        tcp_flush_responses(client_fd);
+        if (!tcp_flush_responses(client_fd)) {
+            ESP_LOGW(TAG, "client send failed/timeout, closing session");
+            tcp_close_socket(client_fd);
+            client_fd = -1;
+            pending = 0;
+        }
     }
 
     if (client_fd >= 0) {

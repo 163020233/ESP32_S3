@@ -35,7 +35,7 @@ extern "C" {
 /* 路由队列深度：NetTask/UART -> RouterTask */
 #define AIRNODE_ROUTER_QUEUE_LEN      16
 /* 应答队列深度：RouterTask -> TCP NetTask */
-#define AIRNODE_SEND_QUEUE_LEN        8
+#define AIRNODE_SEND_QUEUE_LEN        16
 
 /* ============================================================
  * NVS 存储

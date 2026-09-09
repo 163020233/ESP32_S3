@@ -79,6 +79,9 @@ static esp_err_t set_pulse(uint8_t ch, uint16_t pulse_us)
     }
     if (err == ESP_OK) {
         s_last_pulse_us[ch] = pulse_us;
+        /* 脉宽路径改变了输出：清掉旧的"角度指令"记录，
+         * 让 servo_get/servo_status 回真实（由脉宽反算）状态 */
+        s_last_angle[ch] = -1;
     }
 
     ESP_LOGD(TAG, "CH%u PWM set to %u us (duty=%lu)", ch, pulse_us,

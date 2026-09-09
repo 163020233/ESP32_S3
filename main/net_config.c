@@ -145,11 +145,26 @@ esp_err_t net_config_get(char *ip_out, char *mask_out, char *gw_out)
 
 esp_err_t net_config_set(const char *ip, const char *mask, const char *gw)
 {
+    /* 支持部分更新：参数为 NULL 表示"保持当前值不变" */
+    bool have_ip = (ip != NULL);
+    bool have_mask = (mask != NULL);
+    bool have_gw = (gw != NULL);
+
     uint8_t ipb[4], maskb[4], gwb[4];
-    if (!parse_ipv4(ip, ipb) || !parse_ipv4(mask, maskb) || !parse_ipv4(gw, gwb)) {
-        ESP_LOGW(TAG, "invalid net config: ip=%s mask=%s gw=%s",
-                 ip ? ip : "(null)", mask ? mask : "(null)", gw ? gw : "(null)");
+    if (have_ip && !parse_ipv4(ip, ipb)) {
+        ESP_LOGW(TAG, "invalid ip: %s", ip);
         return ESP_ERR_INVALID_ARG;
+    }
+    if (have_mask && !parse_ipv4(mask, maskb)) {
+        ESP_LOGW(TAG, "invalid mask: %s", mask);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (have_gw && !parse_ipv4(gw, gwb)) {
+        ESP_LOGW(TAG, "invalid gw: %s", gw);
+        return ESP_ERR_INVALID_ARG;
+    }
+    if (!have_ip && !have_mask && !have_gw) {
+        return ESP_OK;    /* 无可更新项 */
     }
     if (s_mutex == NULL) {
         esp_err_t err = net_config_load();
@@ -160,9 +175,15 @@ esp_err_t net_config_set(const char *ip, const char *mask, const char *gw)
     if (xSemaphoreTake(s_mutex, portMAX_DELAY) != pdTRUE) {
         return ESP_ERR_TIMEOUT;
     }
-    memcpy(s_cfg.ip, ipb, 4);
-    memcpy(s_cfg.mask, maskb, 4);
-    memcpy(s_cfg.gw, gwb, 4);
+    if (have_ip) {
+        memcpy(s_cfg.ip, ipb, 4);
+    }
+    if (have_mask) {
+        memcpy(s_cfg.mask, maskb, 4);
+    }
+    if (have_gw) {
+        memcpy(s_cfg.gw, gwb, 4);
+    }
     s_cfg.magic = NET_CFG_MAGIC;
     esp_err_t err = write_nvs();
     xSemaphoreGive(s_mutex);

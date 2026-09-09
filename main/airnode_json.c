@@ -23,38 +23,33 @@ static const char *find_value(const char *json, const char *key)
     }
 
     int keylen = (int)strlen(key);
+    const char *p = json;
 
-    while (*json) {
-        if (*json != '"') {
-            json++;
+    while (p && *p) {
+        p = strchr(p, '"');
+        if (!p) {
+            return NULL;
+        }
+        p++; /* 跳过左引号 */
+
+        if (strncmp(p, key, (size_t)keylen) == 0 && p[keylen] == '"') {
+            const char *q = p + keylen;      /* q 指向 key 的右引号 */
+            q++;                             /* 跳过右引号 */
+            q = skip_space(q);
+            if (*q == ':') {
+                q = skip_space(q + 1);
+                return q;                    /* 真正的键值对 */
+            }
+            /* 命中处不是键（例如某个字符串值恰好与 key 同名）：
+             * 不能提前放弃，继续向后扫描真实 key */
+            p = q;
             continue;
         }
 
-        json++; /* 跳过左引号 */
-
-        if (strncmp(json, key, (size_t)keylen) == 0 && json[keylen] == '"') {
-            json += keylen;
-
-            if (*json != '"') {
-                return NULL;
-            }
-            json++; /* 跳过右引号 */
-
-            json = skip_space(json);
-            if (*json != ':') {
-                return NULL;
-            }
-            json++; /* 跳过冒号 */
-            json = skip_space(json);
-
-            return json;
+        p = strchr(p, '"');
+        if (p) {
+            p++; /* 跳到下一个双引号后 */
         }
-
-        json = strchr(json, '"');
-        if (!json) {
-            return NULL;
-        }
-        json++; /* 跳到下一个双引号后 */
     }
 
     return NULL;
@@ -100,9 +95,11 @@ int airnode_json_get_string(const char *json, const char *key,
     }
 
     if (i >= maxlen - 1) {
+        value[maxlen - 1] = '\0';   /* 截断也必须保证调用方缓冲有结尾符 */
         return -2;
     }
     if (*v != '"') {
+        value[i] = '\0';
         return -3;
     }
 
@@ -139,8 +136,13 @@ int airnode_json_get_int(const char *json, const char *key, int *value)
     }
 
     int num = 0;
+    int digits = 0;
     while (*v >= '0' && *v <= '9') {
+        if (digits >= 9) {           /* 上限防 int 溢出回绕成合法小值 */
+            return -2;
+        }
         num = num * 10 + (*v - '0');
+        digits++;
         v++;
     }
 

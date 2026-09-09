@@ -12,6 +12,7 @@
 #include "esp_netif.h"
 #include "esp_netif_ip_addr.h"
 #include "esp_timer.h"
+#include "esp_mac.h"
 
 #include "test_config.h"
 #include "w5500_port.h"
@@ -195,6 +196,18 @@ esp_err_t ethernet_manager_start(void)
     ESP_RETURN_ON_ERROR(esp_event_handler_register(IP_EVENT, IP_EVENT_ETH_LOST_IP,
                                                    &lost_ip_event_handler, NULL),
                         TAG, "register LOST_IP event failed");
+
+    /* 6.5 写入 W5500 MAC：出厂基 MAC + locally-administered 位。
+     * 不设置的话运行期 SHAR 为全 0（或阶段一测试残留的相同假 MAC），
+     * 同网段多台设备必然冲突，且 SOCK0 开了 MAC 过滤会收不到包。 */
+    uint8_t mac_addr[6];
+    ESP_RETURN_ON_ERROR(esp_read_mac(mac_addr, ESP_MAC_ETH), TAG, "read base MAC failed");
+    mac_addr[0] = (mac_addr[0] & 0xFC) | 0x02;    /* unicast + locally administered */
+    ESP_RETURN_ON_ERROR(esp_eth_ioctl(s_eth_handle, ETH_CMD_S_MAC_ADDR, mac_addr),
+                        TAG, "set ETH MAC failed");
+    ESP_LOGI(TAG, "ETH MAC: %02x:%02x:%02x:%02x:%02x:%02x",
+             mac_addr[0], mac_addr[1], mac_addr[2],
+             mac_addr[3], mac_addr[4], mac_addr[5]);
 
     /* 7. 启动以太网 */
     ESP_RETURN_ON_ERROR(esp_eth_start(s_eth_handle), TAG, "eth start failed");
