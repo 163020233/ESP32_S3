@@ -55,6 +55,7 @@ main/
 └── stress_test.c/h         # UDP 压力测试
 tools/
 ├── pc_udp_test.py          # PC 端联调工具（UDP/TCP 测试）
+├── airnode_net_set.py      # AirNode 网络参数读写 (net_get/net_set，TCP 或串口)
 └── (AirNode 配置工具 thrower_config.py 位于 STM32 工程 tools/，协议兼容，可直接使用)
 ```
 
@@ -97,6 +98,14 @@ idf.py -DSDKCONFIG="<工程绝对路径>\build_prod\sdkconfig" ^
   `{"command":"net_set","ip":"192.168.144.20","mask":"255.255.255.0","gw":"192.168.144.1","cseq":"1"}\r\n\r\n`
   保存后即时生效（已连接客户端会断开重连）。
 - 查询：`{"command":"net_get","cseq":"1"}\r\n\r\n`
+
+便捷工具（TCP 或串口均可）：
+```bash
+python tools/airnode_net_set.py get --ip 192.168.144.20              # 读取
+python tools/airnode_net_set.py set --ip 192.168.144.20 \
+    --new-ip 192.168.144.30 --mask 255.255.255.0 --gw 192.168.144.1  # 修改并保存
+python tools/airnode_net_set.py get --port COM5                      # 走 UART1 配置口
+```
 
 ## AirNode 业务协议（与 STM32 版兼容）
 
